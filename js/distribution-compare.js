@@ -791,6 +791,79 @@ function getAlignment(delta){
   return{label:'Significant gap',cls:'align-bad'};
 }
 
+/* ========== EXECUTIVE SUMMARY ========== */
+function dcBuildExecSummary(dimensions){
+  const el=document.getElementById('dc-exec-summary');
+  if(!el)return;
+
+  const tTotal=DC.targetRaw.length;
+  const cTotal=DC.currentRaw.length;
+
+  // Analyze each dimension
+  const dimSummaries=dimensions.map(dim=>{
+    const comp=dim.comparison;
+    const avgAbsDelta=comp.reduce((s,r)=>s+Math.abs(r.delta),0)/comp.length;
+    const aligned=comp.filter(r=>Math.abs(r.delta)<=0.03);
+    const significant=comp.filter(r=>Math.abs(r.delta)>0.07);
+
+    // Top over-indexed (current > target)
+    const overIndexed=[...comp].filter(r=>r.delta>0.03).sort((a,b)=>b.delta-a.delta);
+    // Top under-indexed (current < target)
+    const underIndexed=[...comp].filter(r=>r.delta<-0.03).sort((a,b)=>a.delta-b.delta);
+
+    const alignPct=comp.length?(aligned.length/comp.length*100):0;
+    const health=avgAbsDelta<=0.03?'well':avgAbsDelta<=0.08?'moderate':'poor';
+
+    return{name:dim.name,avgAbsDelta,aligned:aligned.length,significant:significant.length,
+      total:comp.length,alignPct,health,overIndexed,underIndexed};
+  });
+
+  // Overall health
+  const overallAvg=dimSummaries.reduce((s,d)=>s+d.avgAbsDelta,0)/dimSummaries.length;
+  const overallHealth=overallAvg<=0.03?'Well Aligned':overallAvg<=0.08?'Moderately Aligned':'Poorly Aligned';
+  const overallCls=overallAvg<=0.03?'health-good':overallAvg<=0.08?'health-warn':'health-bad';
+
+  let html=`<h2>Executive Summary</h2>`;
+  html+=`<div class="exec-overview">`;
+  html+=`<p>Comparing <strong>${tTotal.toLocaleString()} target accounts</strong> against <strong>${cTotal.toLocaleString()} current customers</strong> across <strong>${dimensions.length} dimension${dimensions.length>1?'s':''}</strong>.</p>`;
+  html+=`<p>Overall alignment: <span class="exec-health ${overallCls}">${overallHealth}</span></p>`;
+  html+=`</div>`;
+
+  // Per-dimension insights
+  html+=`<div class="exec-dimensions">`;
+  for(const ds of dimSummaries){
+    const icon=ds.health==='well'?'&#9989;':ds.health==='moderate'?'&#9888;&#65039;':'&#10060;';
+    html+=`<div class="exec-dim">`;
+    html+=`<h3>${icon} ${esc(ds.name)}</h3>`;
+    html+=`<p>${ds.aligned} of ${ds.total} categories aligned (${ds.alignPct.toFixed(0)}%)`;
+    if(ds.significant.length>0)html+=` &mdash; <strong>${ds.significant.length} significant gap${ds.significant.length>1?'s':''}</strong>`;
+    html+=`</p>`;
+
+    if(ds.overIndexed.length>0){
+      const top=ds.overIndexed.slice(0,3);
+      html+=`<p class="exec-insight"><span class="exec-label over">Over-represented:</span> `;
+      html+=top.map(r=>`${esc(r.targetLabel)} (+${(r.delta*100).toFixed(1)}%)`).join(', ');
+      if(ds.overIndexed.length>3)html+=` and ${ds.overIndexed.length-3} more`;
+      html+=`</p>`;
+    }
+    if(ds.underIndexed.length>0){
+      const top=ds.underIndexed.slice(0,3);
+      html+=`<p class="exec-insight"><span class="exec-label under">Under-represented:</span> `;
+      html+=top.map(r=>`${esc(r.targetLabel)} (${(r.delta*100).toFixed(1)}%)`).join(', ');
+      if(ds.underIndexed.length>3)html+=` and ${ds.underIndexed.length-3} more`;
+      html+=`</p>`;
+    }
+    if(ds.overIndexed.length===0&&ds.underIndexed.length===0){
+      html+=`<p class="exec-insight" style="color:var(--text-success)">All categories are within alignment thresholds.</p>`;
+    }
+    html+=`</div>`;
+  }
+  html+=`</div>`;
+
+  el.innerHTML=html;
+  el.style.display='';
+}
+
 /* ========== RENDER RESULTS (Step 4) ========== */
 
 // Store results data for sorting
@@ -800,6 +873,8 @@ function dcRenderResults(dimensions){
   DC._resultDimensions=dimensions;
   const tTotal=DC.targetRaw.length;
   const cTotal=DC.currentRaw.length;
+
+  dcBuildExecSummary(dimensions);
 
   document.getElementById('dc-total-target').textContent=tTotal.toLocaleString();
   document.getElementById('dc-total-current').textContent=cTotal.toLocaleString();
