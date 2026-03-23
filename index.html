@@ -23,9 +23,9 @@
 <div class="app-section active" id="section-ca">
 
   <div class="step-indicator">
-    <div class="step-dot current" id="sd1">1. Upload Files</div>
-    <div class="step-dot" id="sd2">2. Map Columns</div>
-    <div class="step-dot" id="sd3">3. Analysis</div>
+    <div class="step-dot current" id="sd1" onclick="caNavToStep(1)">1. Upload Files</div>
+    <div class="step-dot" id="sd2" onclick="caNavToStep(2)">2. Map Columns</div>
+    <div class="step-dot" id="sd3" onclick="caNavToStep(3)">3. Analysis</div>
   </div>
 
   <!-- Step 1: Upload -->
@@ -69,7 +69,7 @@
 
   <!-- Step 3: Results -->
   <div class="step" id="step3">
-    <div class="btn-row" style="margin-top:0;margin-bottom:var(--space-400)"><button class="btn btn-secondary" onclick="goToStep(1)">Start Over</button></div>
+    <div class="btn-row" style="margin-top:0;margin-bottom:var(--space-400)"><button class="btn btn-secondary" onclick="CA_highestStep=1;goToStep(1)">Start Over</button></div>
     <div class="kpi-row" id="ca-kpi-row"></div>
     <div id="ca-results-area">
       <div class="tabs" id="ca-tabs"></div>

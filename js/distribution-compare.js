@@ -835,11 +835,11 @@ function dcBuildExecSummary(dimensions){
   const actionItems=[];
   for(const ds of dimSummaries){
     for(const r of ds.whitespace.slice(0,2)){
-      actionItems.push({priority:'high',text:`No current customers in <strong>${esc(r.targetLabel)}</strong> (${ds.name}) — ${(r.targetPct*100).toFixed(1)}% of target list`});
+      actionItems.push({priority:'high',text:`${(r.targetPct*100).toFixed(1)}% of target list is in <strong>${esc(r.targetLabel)}</strong> (${ds.name}), but there are no current customers there`});
     }
     for(const r of ds.underPenetrated.slice(0,2)){
       if(r.currentCount>0){
-        actionItems.push({priority:'medium',text:`<strong>${esc(r.targetLabel)}</strong> (${ds.name}): ${(r.currentPct*100).toFixed(1)}% of customers vs ${(r.targetPct*100).toFixed(1)}% of target — gap of ${(Math.abs(r.delta)*100).toFixed(1)}pp`});
+        actionItems.push({priority:'medium',text:`${(r.targetPct*100).toFixed(1)}% of target list is in <strong>${esc(r.targetLabel)}</strong> (${ds.name}), but only ${(r.currentPct*100).toFixed(1)}% of current customers are — gap of ${(Math.abs(r.delta)*100).toFixed(1)}pp`});
       }
     }
   }
@@ -877,41 +877,13 @@ function dcBuildExecSummary(dimensions){
   // Per-dimension breakdown
   html+=`<div class="exec-dimensions">`;
   for(const ds of dimSummaries){
-    const onTrackPct=ds.totalCategories?(ds.onTrack.length/ds.totalCategories*100):0;
     html+=`<div class="exec-dim">`;
     html+=`<h3>${esc(ds.name)}</h3>`;
-
-    // Progress-style summary
     html+=`<div class="exec-dim-stats">`;
     html+=`<span class="exec-stat"><strong>${ds.onTrack.length}</strong> of ${ds.totalCategories} categories on track</span>`;
     if(ds.underPenetrated.length>0)html+=`<span class="exec-stat warn"><strong>${ds.underPenetrated.length}</strong> under-penetrated</span>`;
     if(ds.whitespace.length>0)html+=`<span class="exec-stat bad"><strong>${ds.whitespace.length}</strong> with zero customers</span>`;
     html+=`</div>`;
-
-    // Under-penetrated (where to grow)
-    if(ds.underPenetrated.length>0){
-      html+=`<p class="exec-insight"><span class="exec-label under">Grow into:</span> `;
-      const top=ds.underPenetrated.slice(0,3);
-      html+=top.map(r=>{
-        const gap=Math.abs(r.delta)*100;
-        return `${esc(r.targetLabel)} (${(r.targetPct*100).toFixed(1)}% of target, only ${(r.currentPct*100).toFixed(1)}% today — ${gap.toFixed(1)}pp gap)`;
-      }).join('; ');
-      if(ds.underPenetrated.length>3)html+=`; and ${ds.underPenetrated.length-3} more`;
-      html+=`</p>`;
-    }
-
-    // Over-concentrated (where current base is heavier than target calls for)
-    if(ds.overConcentrated.length>0){
-      html+=`<p class="exec-insight"><span class="exec-label over">Already strong:</span> `;
-      const top=ds.overConcentrated.slice(0,3);
-      html+=top.map(r=>`${esc(r.targetLabel)} (${(r.currentPct*100).toFixed(1)}% of customers vs ${(r.targetPct*100).toFixed(1)}% of target)`).join('; ');
-      if(ds.overConcentrated.length>3)html+=`; and ${ds.overConcentrated.length-3} more`;
-      html+=`</p>`;
-    }
-
-    if(ds.underPenetrated.length===0&&ds.overConcentrated.length===0){
-      html+=`<p class="exec-insight" style="color:var(--text-success)">Current mix matches target profile across all categories.</p>`;
-    }
     html+=`</div>`;
   }
   html+=`</div>`;
