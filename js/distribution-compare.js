@@ -874,19 +874,6 @@ function dcBuildExecSummary(dimensions){
     html+=`</ul></div>`;
   }
 
-  // Per-dimension breakdown
-  html+=`<div class="exec-dimensions">`;
-  for(const ds of dimSummaries){
-    html+=`<div class="exec-dim">`;
-    html+=`<h3>${esc(ds.name)}</h3>`;
-    html+=`<div class="exec-dim-stats">`;
-    html+=`<span class="exec-stat"><strong>${ds.onTrack.length}</strong> of ${ds.totalCategories} categories on track</span>`;
-    if(ds.underPenetrated.length>0)html+=`<span class="exec-stat warn"><strong>${ds.underPenetrated.length}</strong> under-penetrated</span>`;
-    if(ds.whitespace.length>0)html+=`<span class="exec-stat bad"><strong>${ds.whitespace.length}</strong> with zero customers</span>`;
-    html+=`</div>`;
-    html+=`</div>`;
-  }
-  html+=`</div>`;
 
   el.innerHTML=html;
   el.style.display='';
