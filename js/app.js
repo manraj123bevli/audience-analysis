@@ -9,7 +9,10 @@ function switchSection(key,btn){
 }
 
 /* ---- Step wizard (Contact Analysis) ---- */
+let CA_highestStep=1;
+
 function goToStep(n){
+  if(n>CA_highestStep)CA_highestStep=n;
   document.querySelectorAll('.step').forEach(s=>s.classList.remove('active'));
   document.getElementById('step'+n).classList.add('active');
   ['sd1','sd2','sd3'].forEach((id,i)=>{
@@ -17,8 +20,17 @@ function goToStep(n){
     el.className='step-dot';
     if(i+1<n)el.classList.add('done');
     else if(i+1===n)el.classList.add('current');
+    if(i+1<=CA_highestStep&&i+1!==n){
+      el.style.cursor='pointer';
+    }else{
+      el.style.cursor='default';
+    }
   });
   window.scrollTo({top:0,behavior:'smooth'});
+}
+
+function caNavToStep(n){
+  if(n<=CA_highestStep) goToStep(n);
 }
 
 function goToStep2(){

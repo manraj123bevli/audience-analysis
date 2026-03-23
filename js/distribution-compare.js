@@ -799,63 +799,91 @@ function dcBuildExecSummary(dimensions){
   const tTotal=DC.targetRaw.length;
   const cTotal=DC.currentRaw.length;
 
-  // Analyze each dimension
+  // Analyze each dimension relative to target
   const dimSummaries=dimensions.map(dim=>{
     const comp=dim.comparison;
     const avgAbsDelta=comp.reduce((s,r)=>s+Math.abs(r.delta),0)/comp.length;
-    const aligned=comp.filter(r=>Math.abs(r.delta)<=0.03);
-    const significant=comp.filter(r=>Math.abs(r.delta)>0.07);
 
-    // Top over-indexed (current > target)
-    const overIndexed=[...comp].filter(r=>r.delta>0.03).sort((a,b)=>b.delta-a.delta);
-    // Top under-indexed (current < target)
-    const underIndexed=[...comp].filter(r=>r.delta<-0.03).sort((a,b)=>a.delta-b.delta);
+    // Gaps: where current customer mix doesn't match target profile
+    // Negative delta = under-penetrated vs target (we need MORE here)
+    // Positive delta = over-concentrated vs target (we're heavy here relative to where we should be)
+    const underPenetrated=[...comp].filter(r=>r.delta<-0.03&&r.targetPct>0).sort((a,b)=>a.delta-b.delta);
+    const overConcentrated=[...comp].filter(r=>r.delta>0.03).sort((a,b)=>b.delta-a.delta);
+    const onTrack=comp.filter(r=>Math.abs(r.delta)<=0.03&&r.targetPct>0);
 
-    const alignPct=comp.length?(aligned.length/comp.length*100):0;
+    // Whitespace: categories in target with zero or near-zero current presence
+    const whitespace=[...comp].filter(r=>r.targetPct>=0.02&&r.currentCount===0).sort((a,b)=>b.targetPct-a.targetPct);
+
+    // Biggest single gap
+    const biggestGap=underPenetrated.length>0?underPenetrated[0]:null;
+
+    // Total target share represented by under-penetrated categories
+    const underPenTargetShare=underPenetrated.reduce((s,r)=>s+r.targetPct,0);
+
     const health=avgAbsDelta<=0.03?'well':avgAbsDelta<=0.08?'moderate':'poor';
 
-    return{name:dim.name,avgAbsDelta,aligned:aligned.length,significant:significant.length,
-      total:comp.length,alignPct,health,overIndexed,underIndexed};
+    return{name:dim.name,avgAbsDelta,health,comp,
+      underPenetrated,overConcentrated,onTrack,whitespace,biggestGap,underPenTargetShare,
+      totalCategories:comp.filter(r=>r.targetPct>0).length};
   });
 
-  // Overall health
+  // Overall
   const overallAvg=dimSummaries.reduce((s,d)=>s+d.avgAbsDelta,0)/dimSummaries.length;
-  const overallHealth=overallAvg<=0.03?'Well Aligned':overallAvg<=0.08?'Moderately Aligned':'Poorly Aligned';
   const overallCls=overallAvg<=0.03?'health-good':overallAvg<=0.08?'health-warn':'health-bad';
 
+  // Collect top action items across all dimensions
+  const actionItems=[];
+  for(const ds of dimSummaries){
+    for(const r of ds.whitespace.slice(0,2)){
+      actionItems.push({priority:'high',text:`${(r.targetPct*100).toFixed(1)}% of target list is in <strong>${esc(r.targetLabel)}</strong> (${ds.name}), but there are no current customers there`});
+    }
+    for(const r of ds.underPenetrated.slice(0,2)){
+      if(r.currentCount>0){
+        actionItems.push({priority:'medium',text:`${(r.targetPct*100).toFixed(1)}% of target list is in <strong>${esc(r.targetLabel)}</strong> (${ds.name}), but only ${(r.currentPct*100).toFixed(1)}% of current customers are — gap of ${(Math.abs(r.delta)*100).toFixed(1)}pp`});
+      }
+    }
+  }
+
   let html=`<h2>Executive Summary</h2>`;
+
+  // Top-line narrative
   html+=`<div class="exec-overview">`;
-  html+=`<p>Comparing <strong>${tTotal.toLocaleString()} target accounts</strong> against <strong>${cTotal.toLocaleString()} current customers</strong> across <strong>${dimensions.length} dimension${dimensions.length>1?'s':''}</strong>.</p>`;
-  html+=`<p>Overall alignment: <span class="exec-health ${overallCls}">${overallHealth}</span></p>`;
+  html+=`<p>Your target list of <strong>${tTotal.toLocaleString()} accounts</strong> defines where you want to be. Your current <strong>${cTotal.toLocaleString()} customers</strong> are compared below to identify gaps and opportunities across <strong>${dimensions.length} dimension${dimensions.length>1?'s':''}</strong>.</p>`;
+
+  // One-line verdict
+  const wellCount=dimSummaries.filter(d=>d.health==='well').length;
+  const poorCount=dimSummaries.filter(d=>d.health==='poor').length;
+  if(poorCount>0){
+    html+=`<p><span class="exec-health health-bad">Action needed</span> — ${poorCount} of ${dimSummaries.length} dimension${dimSummaries.length>1?'s':''} show${poorCount===1?'s':''} significant misalignment with your target profile.</p>`;
+  }else if(wellCount===dimSummaries.length){
+    html+=`<p><span class="exec-health health-good">On track</span> — your current customer mix closely matches your target profile across all dimensions.</p>`;
+  }else{
+    html+=`<p><span class="exec-health health-warn">Partially aligned</span> — some dimensions match your target profile, others have gaps to close.</p>`;
+  }
   html+=`</div>`;
 
-  // Per-dimension insights
+  // Priority actions
+  if(actionItems.length>0){
+    html+=`<div class="exec-actions">`;
+    html+=`<h3>Key Gaps to Close</h3>`;
+    html+=`<ul>`;
+    for(const item of actionItems.slice(0,6)){
+      const cls=item.priority==='high'?'action-high':'action-medium';
+      html+=`<li class="${cls}">${item.text}</li>`;
+    }
+    html+=`</ul></div>`;
+  }
+
+  // Per-dimension breakdown
   html+=`<div class="exec-dimensions">`;
   for(const ds of dimSummaries){
-    const icon=ds.health==='well'?'&#9989;':ds.health==='moderate'?'&#9888;&#65039;':'&#10060;';
     html+=`<div class="exec-dim">`;
-    html+=`<h3>${icon} ${esc(ds.name)}</h3>`;
-    html+=`<p>${ds.aligned} of ${ds.total} categories aligned (${ds.alignPct.toFixed(0)}%)`;
-    if(ds.significant.length>0)html+=` &mdash; <strong>${ds.significant.length} significant gap${ds.significant.length>1?'s':''}</strong>`;
-    html+=`</p>`;
-
-    if(ds.overIndexed.length>0){
-      const top=ds.overIndexed.slice(0,3);
-      html+=`<p class="exec-insight"><span class="exec-label over">Over-represented:</span> `;
-      html+=top.map(r=>`${esc(r.targetLabel)} (+${(r.delta*100).toFixed(1)}%)`).join(', ');
-      if(ds.overIndexed.length>3)html+=` and ${ds.overIndexed.length-3} more`;
-      html+=`</p>`;
-    }
-    if(ds.underIndexed.length>0){
-      const top=ds.underIndexed.slice(0,3);
-      html+=`<p class="exec-insight"><span class="exec-label under">Under-represented:</span> `;
-      html+=top.map(r=>`${esc(r.targetLabel)} (${(r.delta*100).toFixed(1)}%)`).join(', ');
-      if(ds.underIndexed.length>3)html+=` and ${ds.underIndexed.length-3} more`;
-      html+=`</p>`;
-    }
-    if(ds.overIndexed.length===0&&ds.underIndexed.length===0){
-      html+=`<p class="exec-insight" style="color:var(--text-success)">All categories are within alignment thresholds.</p>`;
-    }
+    html+=`<h3>${esc(ds.name)}</h3>`;
+    html+=`<div class="exec-dim-stats">`;
+    html+=`<span class="exec-stat"><strong>${ds.onTrack.length}</strong> of ${ds.totalCategories} categories on track</span>`;
+    if(ds.underPenetrated.length>0)html+=`<span class="exec-stat warn"><strong>${ds.underPenetrated.length}</strong> under-penetrated</span>`;
+    if(ds.whitespace.length>0)html+=`<span class="exec-stat bad"><strong>${ds.whitespace.length}</strong> with zero customers</span>`;
+    html+=`</div>`;
     html+=`</div>`;
   }
   html+=`</div>`;
