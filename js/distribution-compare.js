@@ -571,13 +571,13 @@ function dcRenderReconPanel(dim,recon){
     html+=`<div style="background:var(--bg-success-subtle);border-radius:var(--radius-md);padding:var(--space-400) var(--space-600);margin-bottom:var(--space-400);font-size:14px;color:var(--text-success);font-weight:500">All values matched automatically. No action needed.</div>`;
   }
 
-  // ===== SECTION 2: MATCHED GROUPS (collapsed) =====
+  // ===== SECTION 2: MATCHED GROUPS (expanded by default) =====
   const matchedCount=sortedGroups.length;
   const totalMatched=sortedGroups.reduce((s,[,members])=>s+members.reduce((s2,m)=>s2+m.count,0),0);
   const toggleId=`dc-matched-toggle-${dim.key}`;
   const detailsId=`dc-matched-details-${dim.key}`;
 
-  html+=`<div class="matched-toggle" id="${toggleId}" onclick="dcToggleMatched('${dim.key}')">
+  html+=`<div class="matched-toggle open" id="${toggleId}" onclick="dcToggleMatched('${dim.key}')">
     <div class="matched-toggle-left">
       <span class="matched-toggle-label">${matchedCount} matched groups</span>
       <span class="matched-toggle-count">${totalMatched.toLocaleString()} total accounts</span>
@@ -586,24 +586,34 @@ function dcRenderReconPanel(dim,recon){
   </div>
   <div class="matched-details" id="${detailsId}">`;
 
+  // Build list of all group labels for the merge-into dropdown
+  const allGroupLabels=sortedGroups.map(([label])=>label);
+
   for(let gi=0;gi<sortedGroups.length;gi++){
     const[masterLabel,members]=sortedGroups[gi];
     const totalCount=members.reduce((s,m)=>s+m.count,0);
     const groupId=`dc-grp-${dim.key}-${gi}`;
-    const targetVals=members.filter(m=>m.source==='target').map(m=>m.value);
-    const currentVals=members.filter(m=>m.source==='current').map(m=>m.value);
-    const valSummary=[...targetVals,...currentVals.filter(v=>!targetVals.includes(v))].join(', ');
 
     const targetMembers=members.filter(m=>m.source==='target');
     const currentMembers=members.filter(m=>m.source==='current');
-    const targetTotal=targetMembers.reduce((s,m)=>s+m.count,0);
-    const currentTotal2=currentMembers.reduce((s,m)=>s+m.count,0);
+
+    // Build merge-into dropdown options (all other groups)
+    const mergeOptions=allGroupLabels
+      .filter(l=>l!==masterLabel)
+      .map(l=>`<option value="${esc(l)}">${esc(l)}</option>`)
+      .join('');
 
     html+=`<div class="matched-row">
       <div class="matched-row-header">
         <input type="checkbox" class="matched-row-check" data-dim="${dim.key}" data-group="${esc(masterLabel)}" onchange="dcUpdateMergeBar('${dim.key}')">
         <input type="text" class="matched-row-name" id="${groupId}" value="${esc(masterLabel)}" data-original="${esc(masterLabel)}">
         <span class="matched-row-total">${totalCount.toLocaleString()} total</span>
+        <div class="matched-row-merge">
+          <select data-dim="${dim.key}" data-source="${esc(masterLabel)}" onchange="dcMergeInto(this.dataset.dim,this.dataset.source,this.value);this.value='';" title="Merge this group into another">
+            <option value="">Merge into...</option>
+            ${mergeOptions}
+          </select>
+        </div>
       </div>
       <div class="matched-row-sources">
         ${targetMembers.map(m=>`<div class="matched-row-source"><span class="src-tag src-target">Target</span><span class="src-val">${esc(m.value)}</span><span class="src-count">${m.count.toLocaleString()}</span></div>`).join('')}
@@ -626,8 +636,14 @@ function dcRenderReconPanel(dim,recon){
 function dcToggleMatched(dimKey){
   const toggle=document.getElementById('dc-matched-toggle-'+dimKey);
   const details=document.getElementById('dc-matched-details-'+dimKey);
-  toggle.classList.toggle('open');
-  details.classList.toggle('open');
+  const isOpen=!details.classList.contains('collapsed');
+  if(isOpen){
+    details.classList.add('collapsed');
+    toggle.classList.remove('open');
+  }else{
+    details.classList.remove('collapsed');
+    toggle.classList.add('open');
+  }
 }
 
 function dcUpdateMergeBar(dimKey){
@@ -661,6 +677,26 @@ function dcMergeSelected(dimKey){
   }
   // Update master labels
   recon.masterLabels=recon.masterLabels.filter(ml=>!mergeInto.includes(ml));
+
+  // Re-render
+  const dim=DC.pendingDims.find(d=>d.key===dimKey);
+  const container=document.getElementById('dc-recon-dim-'+dimKey);
+  container.innerHTML=dcRenderReconPanel(dim,recon);
+}
+
+/* Merge a single group into another via the per-row dropdown */
+function dcMergeInto(dimKey,sourceLabel,targetLabel){
+  if(!sourceLabel||!targetLabel||sourceLabel===targetLabel)return;
+
+  if(!DC._manualMerges)DC._manualMerges={};
+  if(!DC._manualMerges[dimKey])DC._manualMerges[dimKey]={};
+  DC._manualMerges[dimKey][sourceLabel]=targetLabel;
+
+  const recon=DC.reconciliations[dimKey];
+  for(const m of recon.mappings){
+    if(m.masterLabel===sourceLabel) m.masterLabel=targetLabel;
+  }
+  recon.masterLabels=recon.masterLabels.filter(ml=>ml!==sourceLabel);
 
   // Re-render
   const dim=DC.pendingDims.find(d=>d.key===dimKey);
@@ -739,7 +775,8 @@ function dcConfirmAndRun(){
 
     // Compare with no mapFn — values are already reconciled via valueMap
     const comp=compareSections(targetDist,currentDist,null);
-    dimensions.push({key:dim.key,name:dim.label,comparison:comp,target:targetDist,current:currentDist,showMapped:false});
+    dimensions.push({key:dim.key,name:dim.label,comparison:comp,target:targetDist,current:currentDist,showMapped:false,
+      targetCol:dim.targetCol,currentCol:dim.currentCol,valueMap});
   }
 
   dcGoToStep(4);
@@ -961,6 +998,106 @@ function dcSortTable(dimKey,colKey){
   if(dim) dcRenderSortableTable(dimKey,dim.comparison,dim.target.total,dim.current.total,state.col,state.dir);
 }
 
+/* ========== DRILLDOWN: show companies for a category ========== */
+function dcGuessNameCol(cols){
+  const hints=['company name','company','account name','account','name','organization','org name','organisation','company_name','account_name'];
+  for(const h of hints){
+    const match=cols.find(c=>c.toLowerCase().trim()===h);
+    if(match)return match;
+  }
+  // Partial match
+  for(const h of hints){
+    const match=cols.find(c=>c.toLowerCase().includes(h));
+    if(match)return match;
+  }
+  return cols[0]; // fallback to first column
+}
+
+function dcToggleDrilldown(dimKey,categoryLabel,rowEl){
+  const existing=rowEl.nextElementSibling;
+  if(existing&&existing.classList.contains('drilldown-row')){
+    existing.remove();
+    rowEl.classList.remove('drilldown-open');
+    return;
+  }
+
+  // Close any other open drilldown in this table
+  const table=rowEl.closest('table');
+  table.querySelectorAll('.drilldown-row').forEach(r=>r.remove());
+  table.querySelectorAll('.drilldown-open').forEach(r=>r.classList.remove('drilldown-open'));
+
+  const dim=DC._resultDimensions.find(d=>d.key===dimKey);
+  if(!dim)return;
+
+  const isEmpSize=dimKey==='employeeSize';
+  const targetNameCol=dcGuessNameCol(DC.targetCols);
+  const currentNameCol=dcGuessNameCol(DC.currentCols);
+
+  // Find target accounts matching this category
+  const targetAccounts=[];
+  DC.targetRaw.forEach(r=>{
+    let raw=String(r[dim.targetCol]||'').trim()||'(blank)';
+    if(isEmpSize)raw=normalizeEmployeeValue(raw);
+    const mapped=dim.valueMap[raw]||raw;
+    if(mapped===categoryLabel){
+      targetAccounts.push({
+        name:String(r[targetNameCol]||'').trim()||'(unnamed)',
+        rawValue:String(r[dim.targetCol]||'').trim()||'(blank)'
+      });
+    }
+  });
+
+  // Find current accounts matching this category
+  const currentAccounts=[];
+  DC.currentRaw.forEach(r=>{
+    let raw=String(r[dim.currentCol]||'').trim()||'(blank)';
+    if(isEmpSize)raw=normalizeEmployeeValue(raw);
+    const mapped=dim.valueMap[raw]||raw;
+    if(mapped===categoryLabel){
+      currentAccounts.push({
+        name:String(r[currentNameCol]||'').trim()||'(unnamed)',
+        rawValue:String(r[dim.currentCol]||'').trim()||'(blank)'
+      });
+    }
+  });
+
+  targetAccounts.sort((a,b)=>a.name.localeCompare(b.name));
+  currentAccounts.sort((a,b)=>a.name.localeCompare(b.name));
+
+  const colSpan=7;
+  const tr=document.createElement('tr');
+  tr.className='drilldown-row';
+  const td=document.createElement('td');
+  td.colSpan=colSpan;
+
+  const dimLabel=dim.name; // e.g. "Industry", "Country / Geography", "Employee Size / Range"
+
+  let html='<div class="drilldown-content"><div class="drilldown-columns">';
+  html+=`<div class="drilldown-col"><div class="drilldown-col-header">Target Accounts <span class="drilldown-count">(${targetAccounts.length})</span></div>`;
+  if(targetAccounts.length){
+    html+='<ul class="drilldown-list">'+targetAccounts.map(a=>
+      `<li><span class="drilldown-name">${esc(a.name)}</span><span class="drilldown-field">${esc(a.rawValue)}</span></li>`
+    ).join('')+'</ul>';
+  }else{
+    html+='<div class="drilldown-empty">No target accounts</div>';
+  }
+  html+='</div>';
+  html+=`<div class="drilldown-col"><div class="drilldown-col-header">Current Customers <span class="drilldown-count">(${currentAccounts.length})</span></div>`;
+  if(currentAccounts.length){
+    html+='<ul class="drilldown-list">'+currentAccounts.map(a=>
+      `<li><span class="drilldown-name">${esc(a.name)}</span><span class="drilldown-field">${esc(a.rawValue)}</span></li>`
+    ).join('')+'</ul>';
+  }else{
+    html+='<div class="drilldown-empty">No current customers</div>';
+  }
+  html+='</div></div></div>';
+
+  td.innerHTML=html;
+  tr.appendChild(td);
+  rowEl.after(tr);
+  rowEl.classList.add('drilldown-open');
+}
+
 function dcRenderSortableTable(dimKey,comparison,targetTotal,currentTotal,sortCol,sortDir){
   const panel=document.getElementById('panel-'+dimKey);
   if(!panel)return;
@@ -996,8 +1133,8 @@ function dcRenderSortableTable(dimKey,comparison,targetTotal,currentTotal,sortCo
     const deltaAbs=Math.abs(row.delta);
     const barWidth=Math.min(deltaAbs/0.25,1)*100;
     const barColor=align.cls==='align-good'?'var(--text-success)':align.cls==='align-warn'?'var(--text-warning)':'var(--text-error)';
-    html+='<tr>';
-    html+=`<td>${esc(row.targetLabel)}</td>`;
+    html+=`<tr class="category-row" data-dim="${dimKey}" data-category="${esc(row.targetLabel)}" onclick="dcToggleDrilldown(this.dataset.dim,this.dataset.category,this)" style="cursor:pointer">`;
+    html+=`<td class="category-cell">${esc(row.targetLabel)} <span class="drilldown-arrow">&#9654;</span></td>`;
     html+=`<td class="num">${row.targetCount.toLocaleString()}</td>`;
     html+=`<td class="num">${(row.targetPct*100).toFixed(1)}%</td>`;
     html+=`<td class="num">${row.currentCount.toLocaleString()}</td>`;
