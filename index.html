@@ -69,7 +69,7 @@
 
   <!-- Step 3: Results -->
   <div class="step" id="step3">
-    <div class="btn-row" style="margin-top:0;margin-bottom:var(--space-400)"><button class="btn btn-secondary" onclick="CA_highestStep=1;goToStep(1)">Start Over</button></div>
+    <div class="btn-row" style="margin-top:0;margin-bottom:var(--space-400)"><button class="btn btn-secondary" onclick="CA_highestStep=1;goToStep(1)">Start Over</button><button class="btn btn-primary" onclick="caExportResults()">Download Results</button></div>
     <div class="kpi-row" id="ca-kpi-row"></div>
     <div id="ca-results-area">
       <div class="tabs" id="ca-tabs"></div>
@@ -160,7 +160,9 @@
   <!-- DC Step 4: Results -->
   <div class="dc-step" id="dc-step4">
     <div class="btn-row" style="margin-top:0;margin-bottom:var(--space-400)">
+      <button class="btn btn-secondary" onclick="dcBackToReconcile()">Back to Reconcile</button>
       <button class="btn btn-secondary" onclick="dcGoToStep(1)">Start Over</button>
+      <button class="btn btn-primary" onclick="dcExportResults()">Download Results</button>
     </div>
     <div id="dc-exec-summary" class="exec-summary" style="display:none"></div>
     <div class="kpi-row" id="dc-kpi-row"></div>
