@@ -49,6 +49,7 @@ function caRunAnalysis(){
   const uncovered=totalAccounts-covered;
   const cPerAcct=new Map();
   matched.forEach(c=>{cPerAcct.set(c.normCo,(cPerAcct.get(c.normCo)||0)+1)});
+  CA.cPerAcct=cPerAcct;CA.acctMap=acctMap;CA.AM=AM;CA.CM=CM;CA.totalAccounts=totalAccounts;
   const uniqueCos=new Set(contacts.map(c=>c.normCo).filter(Boolean));
 
   const funcDist=freq(contacts.map(c=>c.func));
@@ -168,7 +169,7 @@ function caRunAnalysis(){
   const maxBkt=Math.max(...Object.values(buckets));
   let cv=`<div class="tab-panel" id="panel-ca-coverage"><div class="two-col">`;
   cv+=`<div class="card"><h2>Contacts per Account</h2><div class="table-wrap"><table><thead><tr><th>Bucket</th><th class="num"># Accounts</th><th class="num">%</th><th>Bar</th></tr></thead><tbody>`;
-  Object.entries(buckets).forEach(([k,v])=>{cv+=`<tr><td>${k}</td><td class="num">${v}</td><td class="num">${pct(v,covered)}</td><td>${makeBar(v,maxBkt,'#005bbb')}</td></tr>`});
+  Object.entries(buckets).forEach(([k,v])=>{cv+=`<tr class="category-row" data-bucket="${esc(k)}" onclick="caToggleBucketDrilldown(this.dataset.bucket,this)" style="cursor:pointer"><td class="category-cell">${k} <span class="drilldown-arrow">&#9654;</span></td><td class="num">${v}</td><td class="num">${pct(v,covered)}</td><td>${makeBar(v,maxBkt,'#005bbb')}</td></tr>`});
   cv+=`</tbody></table></div></div>`;
   const topA=[...cPerAcct.entries()].sort((a,b)=>b[1]-a[1]).slice(0,25);
   const maxTA=topA[0]?topA[0][1]:1;
@@ -184,13 +185,14 @@ function caRunAnalysis(){
   P.innerHTML+=cv;
 
   /* FUNCTION ANALYSIS */
-  const maxF=funcDist[0]?funcDist[0][1]:1;
   let fn=`<div class="tab-panel" id="panel-ca-function"><div class="card"><h2>Function Distribution</h2>
-    <div class="table-wrap"><table><thead><tr><th>Function</th><th class="num">#</th><th class="num">%</th><th>Bar</th><th class="num">In Target</th><th class="num">Outside</th>`;
+    <div class="table-wrap"><table><thead><tr><th>Function</th><th class="num">#</th><th class="num">%</th><th>Cumulative</th><th class="num">In Target</th><th class="num">Outside</th>`;
   senTiers.forEach(st=>{fn+=`<th class="num">${st}</th>`});
   fn+=`</tr></thead><tbody>`;
+  let funcCum=0;
   funcDist.forEach(([f,cnt])=>{
-    fn+=`<tr><td><strong>${esc(f)}</strong></td><td class="num">${cnt.toLocaleString()}</td><td class="num">${pct(cnt,total)}</td><td>${makeBar(cnt,maxF,'var(--bg-brand)')}</td><td class="num">${fMatch[f].m}</td><td class="num">${fMatch[f].u}</td>`;
+    funcCum+=cnt;
+    fn+=`<tr class="category-row" data-dim="func" data-category="${esc(f)}" onclick="caToggleDrilldown(this.dataset.dim,this.dataset.category,this)" style="cursor:pointer"><td class="category-cell"><strong>${esc(f)}</strong> <span class="drilldown-arrow">&#9654;</span></td><td class="num">${cnt.toLocaleString()}</td><td class="num">${pct(cnt,total)}</td><td>${makeCumBar(funcCum/total,'var(--bg-brand)')}</td><td class="num">${fMatch[f].m}</td><td class="num">${fMatch[f].u}</td>`;
     senTiers.forEach(st=>{fn+=`<td class="num">${cross[f][st]||0}</td>`});fn+=`</tr>`;
   });
   fn+=`<tr class="total-row"><td>Total</td><td class="num">${total.toLocaleString()}</td><td class="num">100%</td><td></td><td class="num">${matched.length}</td><td class="num">${unmatched.length}</td>`;
@@ -208,11 +210,12 @@ function caRunAnalysis(){
   P.innerHTML+=fn;
 
   /* SENIORITY ANALYSIS */
-  const maxSn=senDist[0]?senDist[0][1]:1;
   let sn=`<div class="tab-panel" id="panel-ca-seniority"><div class="card"><h2>Seniority Distribution</h2>
-    <div class="table-wrap"><table><thead><tr><th>Tier</th><th class="num">#</th><th class="num">%</th><th>Bar</th><th class="num">In Target</th><th class="num">Outside</th></tr></thead><tbody>`;
+    <div class="table-wrap"><table><thead><tr><th>Tier</th><th class="num">#</th><th class="num">%</th><th>Cumulative</th><th class="num">In Target</th><th class="num">Outside</th></tr></thead><tbody>`;
+  let senCum=0;
   senDist.forEach(([st,cnt])=>{
-    sn+=`<tr><td><span class="badge ${senBCls[st]||'b-cyn'}">${esc(st)}</span></td><td class="num">${cnt.toLocaleString()}</td><td class="num">${pct(cnt,total)}</td><td>${makeBar(cnt,maxSn,senColors[st]||'var(--bg-brand)')}</td><td class="num">${sMatch[st].m}</td><td class="num">${sMatch[st].u}</td></tr>`;
+    senCum+=cnt;
+    sn+=`<tr class="category-row" data-dim="seniority" data-category="${esc(st)}" onclick="caToggleDrilldown(this.dataset.dim,this.dataset.category,this)" style="cursor:pointer"><td class="category-cell"><span class="badge ${senBCls[st]||'b-cyn'}">${esc(st)}</span> <span class="drilldown-arrow">&#9654;</span></td><td class="num">${cnt.toLocaleString()}</td><td class="num">${pct(cnt,total)}</td><td>${makeCumBar(senCum/total,senColors[st]||'var(--bg-brand)')}</td><td class="num">${sMatch[st].m}</td><td class="num">${sMatch[st].u}</td></tr>`;
   });
   sn+=`</tbody></table></div>`;
   sn+=`<div class="method-box"><h4>Classification Methodology</h4>
@@ -255,18 +258,220 @@ function caApplyFilters(){
 }
 
 function caRenderDim(data){
+  CA.filteredContacts=data;
   const el=document.getElementById('ca-dim-results');
   const n=data.length;
-  function dt(title,dist,color){
-    const mx=dist[0]?dist[0][1]:1;
-    let h=`<div class="card"><h3>${title} <span style="font-weight:400;color:var(--text-subtle);font-size:12px">(${n.toLocaleString()})</span></h3><div class="table-wrap scroll-table"><table><thead><tr><th>Value</th><th class="num">#</th><th class="num">%</th><th>Bar</th></tr></thead><tbody>`;
-    dist.forEach(([k,v])=>{h+=`<tr><td>${esc(k)}</td><td class="num">${v.toLocaleString()}</td><td class="num">${pct(v,n)}</td><td>${makeBar(v,mx,color)}</td></tr>`});
+  function dt(title,dist,color,dimType){
+    let cum=0;
+    let h=`<div class="card"><h3>${title} <span style="font-weight:400;color:var(--text-subtle);font-size:12px">(${n.toLocaleString()})</span></h3><div class="table-wrap scroll-table"><table><thead><tr><th>Value</th><th class="num">#</th><th class="num">%</th><th>Cumulative</th></tr></thead><tbody>`;
+    dist.forEach(([k,v])=>{cum+=v;h+=`<tr class="category-row" data-dim="dim_${dimType}" data-category="${esc(k)}" onclick="caToggleDrilldown(this.dataset.dim,this.dataset.category,this)" style="cursor:pointer"><td class="category-cell">${esc(k)} <span class="drilldown-arrow">&#9654;</span></td><td class="num">${v.toLocaleString()}</td><td class="num">${pct(v,n)}</td><td>${makeCumBar(cum/n,color)}</td></tr>`});
     return h+`</tbody></table></div></div>`;
   }
   let h=`<div style="background:var(--bg-container);border:1px solid var(--border-base);border-radius:var(--radius-md);padding:var(--space-300) var(--space-400);margin-bottom:var(--space-400);font-size:14px"><strong>${n.toLocaleString()}</strong> contacts match filters</div>`;
-  h+=`<div class="two-col">`+dt('By Industry',freq(data.map(c=>c.industry)),'var(--bg-brand)')+dt('By Country',freq(data.map(c=>c.country)),'#005bbb')+`</div>`;
-  h+=`<div class="two-col">`+dt('By Function',freq(data.map(c=>c.func)),'#5b3da0')+dt('By Seniority',freq(data.map(c=>c.seniority)),'var(--bg-error-strong)')+`</div>`;
-  h+=`<div class="two-col">`+dt('By Lead Status',freq(data.map(c=>c.leadStatus)),'var(--bg-success-strong)')+dt('By City (Top 30)',freq(data.map(c=>c.city)).slice(0,30),'#006b7a')+`</div>`;
-  h+=dt('By Company (Top 30)',freq(data.map(c=>c.company)).slice(0,30),'var(--text-warning)');
+  h+=`<div class="two-col">`+dt('By Industry',freq(data.map(c=>c.industry)),'var(--bg-brand)','industry')+dt('By Country',freq(data.map(c=>c.country)),'#005bbb','country')+`</div>`;
+  h+=`<div class="two-col">`+dt('By Function',freq(data.map(c=>c.func)),'#5b3da0','func')+dt('By Seniority',freq(data.map(c=>c.seniority)),'var(--bg-error-strong)','seniority')+`</div>`;
+  h+=`<div class="two-col">`+dt('By Lead Status',freq(data.map(c=>c.leadStatus)),'var(--bg-success-strong)','leadStatus')+dt('By City (Top 30)',freq(data.map(c=>c.city)).slice(0,30),'#006b7a','city')+`</div>`;
+  h+=dt('By Company (Top 30)',freq(data.map(c=>c.company)).slice(0,30),'var(--text-warning)','company');
   el.innerHTML=h;
+}
+
+/* ========== DRILLDOWN: show contacts for a category ========== */
+function caToggleDrilldown(dimType,categoryLabel,rowEl){
+  const existing=rowEl.nextElementSibling;
+  if(existing&&existing.classList.contains('drilldown-row')){
+    existing.remove();
+    rowEl.classList.remove('drilldown-open');
+    return;
+  }
+
+  const table=rowEl.closest('table');
+  table.querySelectorAll('.drilldown-row').forEach(r=>r.remove());
+  table.querySelectorAll('.drilldown-open').forEach(r=>r.classList.remove('drilldown-open'));
+
+  // Use filtered contacts for dimensional slicing, full set otherwise
+  const isDim=dimType.startsWith('dim_');
+  const pool=isDim&&CA.filteredContacts?CA.filteredContacts:CA.contacts;
+  const actualDim=isDim?dimType.slice(4):dimType;
+
+  const getters={
+    func:c=>c.func, seniority:c=>c.seniority, industry:c=>c.industry,
+    country:c=>c.country, city:c=>c.city, company:c=>c.company, leadStatus:c=>c.leadStatus
+  };
+  const getter=getters[actualDim];
+  if(!getter)return;
+
+  const matching=pool.filter(c=>getter(c)===categoryLabel);
+  const inTarget=matching.filter(c=>c.matched).sort((a,b)=>(a.name||a.company).localeCompare(b.name||b.company));
+  const outside=matching.filter(c=>!c.matched).sort((a,b)=>(a.name||a.company).localeCompare(b.name||b.company));
+
+  const colSpan=rowEl.children.length;
+  const tr=document.createElement('tr');
+  tr.className='drilldown-row';
+  const td=document.createElement('td');
+  td.colSpan=colSpan;
+
+  function renderList(contacts){
+    if(!contacts.length)return'<div class="drilldown-empty">No contacts</div>';
+    return'<ul class="drilldown-list">'+contacts.map(c=>{
+      const title=c.title||'(no title)';
+      const company=c.company||'(no company)';
+      return`<li><span class="drilldown-name">${esc(title)}</span><span class="drilldown-field">${esc(company)}</span></li>`;
+    }).join('')+'</ul>';
+  }
+
+  let html='<div class="drilldown-content"><div class="drilldown-columns">';
+  html+=`<div class="drilldown-col"><div class="drilldown-col-header">In Target <span class="drilldown-count">(${inTarget.length})</span></div>${renderList(inTarget)}</div>`;
+  html+=`<div class="drilldown-col"><div class="drilldown-col-header">Outside Target <span class="drilldown-count">(${outside.length})</span></div>${renderList(outside)}</div>`;
+  html+='</div></div>';
+
+  td.innerHTML=html;
+  tr.appendChild(td);
+  rowEl.after(tr);
+  rowEl.classList.add('drilldown-open');
+}
+
+/* ========== BUCKET DRILLDOWN: accounts per bucket ========== */
+const BUCKET_RANGES={'1 contact':[1,1],'2-3':[2,3],'4-5':[4,5],'6-10':[6,10],'11-20':[11,20],'20+':[21,Infinity]};
+
+function caToggleBucketDrilldown(bucketKey,rowEl){
+  const existing=rowEl.nextElementSibling;
+  if(existing&&existing.classList.contains('drilldown-row')){
+    existing.remove();
+    rowEl.classList.remove('drilldown-open');
+    return;
+  }
+  const table=rowEl.closest('table');
+  table.querySelectorAll('.drilldown-row').forEach(r=>r.remove());
+  table.querySelectorAll('.drilldown-open').forEach(r=>r.classList.remove('drilldown-open'));
+
+  const[min,max]=BUCKET_RANGES[bucketKey]||[0,0];
+  const accounts=[];
+  CA.cPerAcct.forEach((count,normCo)=>{
+    if(count>=min&&count<=max){
+      const acct=CA.acctMap.get(normCo);
+      const name=acct?getVal(acct,CA.AM.company):normCo;
+      accounts.push({name,normCo,count});
+    }
+  });
+  accounts.sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name));
+
+  const colSpan=rowEl.children.length;
+  const tr=document.createElement('tr');
+  tr.className='drilldown-row';
+  const td=document.createElement('td');
+  td.colSpan=colSpan;
+
+  let html='<div class="drilldown-content">';
+  html+=`<div class="drilldown-col-header">${accounts.length} accounts with ${bucketKey} contacts</div>`;
+  html+='<ul class="drilldown-list">';
+  accounts.forEach(a=>{
+    html+=`<li class="ca-acct-item" data-normco="${esc(a.normCo)}" onclick="caToggleAccountContacts(this)" style="cursor:pointer;flex-wrap:wrap">
+      <span class="drilldown-name"><strong>${esc(a.name)}</strong> <span class="drilldown-arrow">&#9654;</span></span>
+      <span class="drilldown-field">${a.count} contact${a.count>1?'s':''}</span>
+      <div class="ca-acct-contacts" style="display:none;width:100%;margin-top:6px"></div>
+    </li>`;
+  });
+  html+='</ul></div>';
+
+  td.innerHTML=html;
+  tr.appendChild(td);
+  rowEl.after(tr);
+  rowEl.classList.add('drilldown-open');
+}
+
+function caToggleAccountContacts(liEl){
+  const container=liEl.querySelector('.ca-acct-contacts');
+  if(container.style.display!=='none'){
+    container.style.display='none';
+    container.innerHTML='';
+    liEl.classList.remove('drilldown-open');
+    return;
+  }
+  const normCo=liEl.dataset.normco;
+  const contacts=CA.contacts.filter(c=>c.normCo===normCo).sort((a,b)=>(a.name||'').localeCompare(b.name||''));
+
+  let html='<table style="width:100%;font-size:12px;border-collapse:collapse;margin-top:4px"><thead><tr style="border-bottom:1px solid var(--border-base)"><th style="text-align:left;padding:4px 8px;color:var(--text-subtle);font-weight:600">Name</th><th style="text-align:left;padding:4px 8px;color:var(--text-subtle);font-weight:600">Job Title</th><th style="text-align:left;padding:4px 8px;color:var(--text-subtle);font-weight:600">Function</th><th style="text-align:left;padding:4px 8px;color:var(--text-subtle);font-weight:600">Seniority</th></tr></thead><tbody>';
+  contacts.forEach(c=>{
+    html+=`<tr style="border-bottom:1px solid var(--border-base)"><td style="padding:4px 8px">${esc(c.name||'(unnamed)')}</td><td style="padding:4px 8px">${esc(c.title||'(no title)')}</td><td style="padding:4px 8px"><span class="badge b-pur">${esc(c.func)}</span></td><td style="padding:4px 8px"><span class="badge b-blue">${esc(c.seniority)}</span></td></tr>`;
+  });
+  html+='</tbody></table>';
+
+  container.innerHTML=html;
+  container.style.display='block';
+  liEl.classList.add('drilldown-open');
+}
+
+/* ========== EXPORT RESULTS ========== */
+function caExportResults(){
+  const wb=XLSX.utils.book_new();
+  const contacts=CA.contacts;
+  const total=contacts.length;
+  const matched=contacts.filter(c=>c.matched);
+  const covered=CA.cPerAcct.size;
+
+  // Sheet 1: Config & Column Mappings
+  const configRows=[
+    {Setting:'Export Date',Value:new Date().toLocaleString()},
+    {Setting:'Total Contacts',Value:total},
+    {Setting:'Total Target Accounts',Value:CA.totalAccounts},
+    {Setting:'Contacts In Target',Value:matched.length},
+    {Setting:'Contacts Outside Target',Value:total-matched.length},
+    {Setting:'Accounts Covered',Value:covered},
+    {Setting:'Accounts w/o Contacts',Value:CA.totalAccounts-covered},
+    {Setting:'Avg Contacts per Account',Value:covered?(matched.length/covered).toFixed(1):'0'},
+    {Setting:'',Value:''},
+    {Setting:'--- Contact Column Mappings ---',Value:''},
+  ];
+  CONTACT_FIELDS.forEach(f=>{if(CA.CM[f.key])configRows.push({Setting:f.label,Value:CA.CM[f.key]})});
+  configRows.push({Setting:'',Value:''},{Setting:'--- Account Column Mappings ---',Value:''});
+  ACCOUNT_FIELDS.forEach(f=>{if(CA.AM[f.key])configRows.push({Setting:f.label,Value:CA.AM[f.key]})});
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(configRows),'Config');
+
+  // Sheet 2: All Contacts with classifications
+  const contactExport=contacts.map(c=>({
+    Name:c.name,Email:c.email,Company:c.company,'Job Title':c.title,
+    'In Target':c.matched?'Yes':'No',
+    Function:c.func,'Function Source':c.funcSource,'Function Method':c.funcMethod,
+    Seniority:c.seniority,'Seniority Source':c.senSource,'Seniority Method':c.senMethod,
+    'CRM Role':c.existingRole,'CRM Seniority':c.existingSeniority,
+    Industry:c.industry,Country:c.country,City:c.city,State:c.state,
+    'Lead Status':c.leadStatus,Lifecycle:c.lifecycle,Owner:c.owner,
+  }));
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(contactExport),'All Contacts');
+
+  // Sheet 3: Function Distribution
+  const funcDist=freq(contacts.map(c=>c.func));
+  const funcRows=funcDist.map(([fn,cnt])=>{
+    const inT=contacts.filter(c=>c.func===fn&&c.matched).length;
+    return{Function:fn,Count:cnt,'%':(cnt/total*100).toFixed(1)+'%','In Target':inT,Outside:cnt-inT};
+  });
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(funcRows),'Function Distribution');
+
+  // Sheet 4: Seniority Distribution
+  const senDist=freq(contacts.map(c=>c.seniority));
+  const senRows=senDist.map(([st,cnt])=>{
+    const inT=contacts.filter(c=>c.seniority===st&&c.matched).length;
+    return{Seniority:st,Count:cnt,'%':(cnt/total*100).toFixed(1)+'%','In Target':inT,Outside:cnt-inT};
+  });
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(senRows),'Seniority Distribution');
+
+  // Sheet 5: Account Coverage
+  const acctRows=[];
+  CA.cPerAcct.forEach((cnt,normCo)=>{
+    const acct=CA.acctMap.get(normCo);
+    acctRows.push({Account:acct?getVal(acct,CA.AM.company):normCo,Contacts:cnt});
+  });
+  acctRows.sort((a,b)=>b.Contacts-a.Contacts);
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(acctRows),'Account Coverage');
+
+  // Sheet 6: Uncovered Accounts
+  const uncovRows=[];
+  CA.acctMap.forEach((a,normCo)=>{
+    if(!CA.cPerAcct.has(normCo)){
+      uncovRows.push({Account:getVal(a,CA.AM.company),Industry:CA.AM.industry?getVal(a,CA.AM.industry):''});
+    }
+  });
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(uncovRows.length?uncovRows:[{Account:'(none)'}]),'Uncovered Accounts');
+
+  XLSX.writeFile(wb,'Contact_Account_Analysis_'+new Date().toISOString().slice(0,10)+'.xlsx');
 }

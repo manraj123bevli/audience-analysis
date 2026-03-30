@@ -24,12 +24,24 @@ const ROLE_MAP={
 };
 
 function classifyFunc(title,role){
-  if(role&&role.trim()){return{fn:ROLE_MAP[role.trim()]||'Other',source:'CRM field: "'+role.trim()+'"',method:'crm'}}
-  if(!title)return{fn:'Unknown',source:'No title or role',method:'none'};
+  const crmResult=role&&role.trim()?{fn:ROLE_MAP[role.trim()]||'Other',source:'CRM field: "'+role.trim()+'"',method:'crm'}:null;
+
+  if(!title)return crmResult||{fn:'Unknown',source:'No title or role',method:'none'};
+
   const t=' '+title.toLowerCase()+' ';
-  for(const rule of FUNC_RULES){for(const kw of rule.kw){if(t.includes(kw))return{fn:rule.fn,source:'Keyword "'+kw.trim()+'" in "'+title+'"',method:'title'}}}
-  if(/\b(ceo|founder|co-founder|cofounder|owner|president|chief executive)\b/i.test(title))return{fn:'Executive/Founder',source:'Exec/founder title',method:'title'};
-  return{fn:'Other',source:'No match in "'+title+'"',method:'title'};
+  let titleResult=null;
+  for(const rule of FUNC_RULES){for(const kw of rule.kw){
+    const match=kw.trim().length<=4?new RegExp('\\b'+kw.trim()+'\\b','i').test(t):t.includes(kw);
+    if(match){titleResult={fn:rule.fn,source:'Keyword "'+kw.trim()+'" in "'+title+'"',method:'title'};break}
+  }if(titleResult)break}
+  if(!titleResult&&/\b(ceo|founder|co-founder|cofounder|owner|president|chief executive)\b/i.test(title))titleResult={fn:'Executive/Founder',source:'Exec/founder title',method:'title'};
+
+  // Title match is more specific — prefer it over CRM when available
+  if(titleResult){
+    if(crmResult&&crmResult.fn!==titleResult.fn)titleResult.source+=' (overrode CRM: "'+role.trim()+'")';
+    return titleResult;
+  }
+  return crmResult||{fn:'Other',source:'No match in "'+title+'"',method:'title'};
 }
 
 /* ========== SENIORITY CLASSIFICATION ========== */
@@ -38,12 +50,27 @@ const SEN_INFL=['\\bdirector\\b','\\bsr\\.?\\s','\\bsenior\\b','\\bprincipal\\b'
 const SEN_PRAC=['engineer','developer','analyst','specialist','coordinator','associate','administrator','consultant','designer','architect','scientist','intern','\\bjunior\\b','\\bjr\\.?\\b'];
 const SEN_CRM={'Executive':'Exec Buyers','VP':'Exec Buyers','Owner':'Exec Buyers','Partner':'Exec Buyers','Director':'Decision Influencers','Senior':'Decision Influencers','Manager':'Decision Influencers','Employee':'Practitioners','Entry':'Practitioners'};
 
+const SEN_RANK={'Exec Buyers':3,'Decision Influencers':2,'Practitioners':1,'Unknown':0};
+
 function classifySen(title,sen){
-  if(sen&&sen.trim()){return{tier:SEN_CRM[sen.trim()]||'Unknown',source:'CRM: "'+sen.trim()+'"',method:'crm'}}
-  if(!title)return{tier:'Unknown',source:'No title/seniority',method:'none'};
+  const crmTier=sen&&sen.trim()?SEN_CRM[sen.trim()]||'Unknown':null;
+  const crmResult=crmTier?{tier:crmTier,source:'CRM: "'+sen.trim()+'"',method:'crm'}:null;
+
+  if(!title){return crmResult||{tier:'Unknown',source:'No title/seniority',method:'none'};}
+
   const t=title.toLowerCase();
-  for(const p of SEN_EXEC){if(new RegExp(p,'i').test(t))return{tier:'Exec Buyers',source:'/'+p+'/ in "'+title+'"',method:'title'}}
-  for(const p of SEN_INFL){if(new RegExp(p,'i').test(t))return{tier:'Decision Influencers',source:'/'+p+'/ in "'+title+'"',method:'title'}}
-  for(const p of SEN_PRAC){if(new RegExp(p,'i').test(t))return{tier:'Practitioners',source:'/'+p+'/ in "'+title+'"',method:'title'}}
-  return{tier:'Unknown',source:'No pattern in "'+title+'"',method:'title'};
+  let titleResult=null;
+  for(const p of SEN_EXEC){if(new RegExp(p,'i').test(t)){titleResult={tier:'Exec Buyers',source:'/'+p+'/ in "'+title+'"',method:'title'};break}}
+  if(!titleResult)for(const p of SEN_INFL){if(new RegExp(p,'i').test(t)){titleResult={tier:'Decision Influencers',source:'/'+p+'/ in "'+title+'"',method:'title'};break}}
+  if(!titleResult)for(const p of SEN_PRAC){if(new RegExp(p,'i').test(t)){titleResult={tier:'Practitioners',source:'/'+p+'/ in "'+title+'"',method:'title'};break}}
+
+  if(!crmResult)return titleResult||{tier:'Unknown',source:'No pattern in "'+title+'"',method:'title'};
+  if(!titleResult)return crmResult;
+
+  // Take the higher seniority between CRM and title
+  if(SEN_RANK[titleResult.tier]>SEN_RANK[crmResult.tier]){
+    titleResult.source+=' (overrode CRM: "'+sen.trim()+'")';
+    return titleResult;
+  }
+  return crmResult;
 }

@@ -432,6 +432,8 @@ function dcPrepareReconciliation(){
   DC.pendingDims=dims;
   DC.reconciliations={};
   DC._reconPanelsHtml={};
+  DC._mergeState={};
+  DC._recsCache={};
 
   // Pre-compute reconciliations and render all panels
   for(const dim of dims){
@@ -442,7 +444,23 @@ function dcPrepareReconciliation(){
     DC._reconPanelsHtml[dim.key]=dcRenderReconPanel(dim,recon);
   }
 
-  // Build dimension tabs
+  dcRenderReconStep();
+  dcGoToStep(3);
+}
+
+/* Navigate back to step 3 from step 4, preserving reconciliation state */
+function dcBackToReconcile(){
+  if(!DC.pendingDims||!DC.pendingDims.length){dcGoToStep(2);return;}
+  // Re-render panels from existing reconciliations
+  for(const dim of DC.pendingDims){
+    DC._reconPanelsHtml[dim.key]=dcRenderReconPanel(dim,DC.reconciliations[dim.key]);
+  }
+  dcRenderReconStep();
+  dcGoToStep(3);
+}
+
+function dcRenderReconStep(){
+  const dims=DC.pendingDims;
   const tabsEl=document.getElementById('dc-recon-tabs');
   tabsEl.innerHTML=dims.map((dim,i)=>{
     const unmatchedCount=DC.reconciliations[dim.key].mappings.filter(m=>m.confidence==='manual').length;
@@ -450,13 +468,10 @@ function dcPrepareReconciliation(){
     return `<button class="tab-btn${i===0?' active':''}" onclick="dcShowReconDim('${dim.key}',this)">${esc(dim.label)}${badge}</button>`;
   }).join('');
 
-  // Render all panels (hidden), show first
   const container=document.getElementById('dc-reconciliation-panels');
   container.innerHTML=dims.map((dim,i)=>
     `<div class="dc-recon-dim${i===0?' active':''}" id="dc-recon-dim-${dim.key}">${DC._reconPanelsHtml[dim.key]}</div>`
   ).join('');
-
-  dcGoToStep(3);
 }
 
 function dcShowReconDim(dimKey,btn){
@@ -467,313 +482,220 @@ function dcShowReconDim(dimKey,btn){
 }
 
 function dcRenderReconPanel(dim,recon){
+  // Build groups from reconciliation mappings
   const groups=new Map();
-  const needsReview=[];  // items needing user action
-
   for(const m of recon.mappings){
-    if(m.confidence==='manual'){
-      needsReview.push(m);
-    }else{
-      const key=m.masterLabel;
-      if(!groups.has(key))groups.set(key,[]);
-      groups.get(key).push(m);
+    const key=m.masterLabel;
+    if(!groups.has(key))groups.set(key,{targetCount:0,currentCount:0,members:[]});
+    const g=groups.get(key);
+    if(m.source==='target')g.targetCount+=m.count;
+    else g.currentCount+=m.count;
+    g.members.push(m);
+  }
+
+  // Merge state
+  if(!DC._mergeState)DC._mergeState={};
+  if(!DC._mergeState[dim.key])DC._mergeState[dim.key]={};
+  const ms=DC._mergeState[dim.key];
+
+  const allLabelsUnsorted=[...groups.keys()];
+  const independentLabels=allLabelsUnsorted.filter(l=>!ms[l]);
+
+  // Reverse map: which labels are absorbed into each label
+  const absorbedBy={};
+  for(const l of allLabelsUnsorted)absorbedBy[l]=[];
+  for(const[src,tgt]of Object.entries(ms)){if(tgt&&absorbedBy[tgt])absorbedBy[tgt].push(src);}
+
+  // Sort
+  if(!DC._reconSort)DC._reconSort={};
+  const sort=DC._reconSort[dim.key]||{col:'total',dir:'desc'};
+  const entries=[...groups.entries()];
+  const sortFns={
+    value:(a,b)=>a[0].localeCompare(b[0]),
+    target:(a,b)=>a[1].targetCount-b[1].targetCount,
+    current:(a,b)=>a[1].currentCount-b[1].currentCount,
+    total:(a,b)=>(a[1].targetCount+a[1].currentCount)-(b[1].targetCount+b[1].currentCount),
+  };
+  const fn=sortFns[sort.col]||sortFns.total;
+  entries.sort((a,b)=>sort.dir==='asc'?fn(a,b):-fn(a,b));
+  const sorted=entries;
+  const allLabels=sorted.map(([l])=>l);
+
+  // Precompute similarity recommendations (cached per dimension)
+  if(!DC._recsCache)DC._recsCache={};
+  if(!DC._recsCache[dim.key]){
+    DC._recsCache[dim.key]={};
+    for(const label of allLabels){
+      DC._recsCache[dim.key][label]=allLabels
+        .filter(l=>l!==label)
+        .map(l=>({label:l,score:similarityScore(label,l)}))
+        .filter(s=>s.score>=0.15)
+        .sort((a,b)=>b.score-a.score)
+        .slice(0,5);
     }
   }
 
-  // Also find groups that look similar to each other (potential merges)
-  const groupLabels=[...groups.keys()];
-  const similarPairs=[];
-  for(let i=0;i<groupLabels.length;i++){
-    for(let j=i+1;j<groupLabels.length;j++){
-      const score=similarityScore(groupLabels[i],groupLabels[j]);
-      if(score>=0.25)similarPairs.push({a:groupLabels[i],b:groupLabels[j],score});
-    }
+  const mergedCount=allLabels.length-independentLabels.length;
+
+  let html=`<div style="margin-bottom:var(--space-400);font-size:13px;color:var(--text-subtle)">${allLabels.length} unique values &rarr; <strong>${independentLabels.length} final groups</strong>${mergedCount?` <span style="color:var(--text-warning)">(${mergedCount} merged)</span>`:''}</div>`;
+
+  // Available to absorb: independent labels not already absorbed by someone else
+  const availableForAbsorb=allLabels.filter(l=>!ms[l]);
+
+  function sortHdr(label,colKey,width,cls){
+    const arrow=sort.col===colKey?(sort.dir==='asc'?' &#9650;':' &#9660;'):'';
+    const style=width?`style="width:${width};cursor:pointer"`:'style="cursor:pointer"';
+    return`<th class="${cls||''}" ${style} onclick="dcReconSort('${dim.key}','${colKey}')">${label}${arrow}</th>`;
   }
-  similarPairs.sort((a,b)=>b.score-a.score);
+  html+=`<div class="table-wrap scroll-table"><table class="recon-table">
+    <thead><tr>
+      ${sortHdr('Value','value','')}
+      ${sortHdr('Target #','target','80px','num')}
+      ${sortHdr('Current #','current','80px','num')}
+      <th>Merge Into This</th>
+      <th>Suggested Matches</th>
+    </tr></thead><tbody>`;
 
-  // Sort groups by count
-  const sortedGroups=[...groups.entries()].sort((a,b)=>{
-    const countA=a[1].reduce((s,m)=>s+m.count,0);
-    const countB=b[1].reduce((s,m)=>s+m.count,0);
-    return countB-countA;
-  });
+  for(const[label,data]of sorted){
+    const mergedInto=ms[label]||'';
+    const isMerged=!!mergedInto;
+    const absorbed=absorbedBy[label]||[];
+    const hasManual=data.members.some(m=>m.confidence==='manual');
 
-  let html='';
+    // Show raw member values if group has multiple
+    const rawVals=[...new Set(data.members.map(m=>m.value))];
+    const memberHint=rawVals.length>1
+      ?`<div style="font-size:11px;color:var(--text-subtle);margin-top:2px">Includes: ${rawVals.map(v=>esc(v)).join(', ')}</div>`
+      :'';
 
-  // ===== SECTION 1: NEEDS REVIEW (prominent) =====
-  // Combine unmatched items + similar pair suggestions
-  const reviewItems=[...needsReview.map(m=>{
-    let bestGroup='',bestScore=0;
-    for(const gl of groupLabels){
-      const sc=similarityScore(m.value,gl);
-      if(sc>bestScore){bestScore=sc;bestGroup=gl;}
-    }
-    const bestCount=bestGroup?groups.get(bestGroup)?.reduce((s,x)=>s+x.count,0)||0:0;
-    return{type:'unmatched',value:m.value,source:m.source,count:m.count,bestGroup,bestScore,bestCount};
-  }),...similarPairs.map(p=>{
-    const countA=groups.get(p.a)?.reduce((s,x)=>s+x.count,0)||0;
-    const countB=groups.get(p.b)?.reduce((s,x)=>s+x.count,0)||0;
-    return{type:'similar',a:p.a,b:p.b,score:p.score,countA,countB};
-  })];
-
-  if(reviewItems.length){
-    for(const item of reviewItems){
-      if(item.type==='unmatched'){
-        const selId=`dc-recon-${dim.key}-${normalizeForMatch(item.value).replace(/\s/g,'_')}`;
-        html+=`<div class="review-card">
-          <span class="review-card-flag flag-unmatched">Needs assignment</span>
-          <div class="review-card-value">${esc(item.value)}</div>
-          <div class="review-card-meta">${item.count.toLocaleString()} accounts from ${item.source==='target'?'Target':'Current'} file</div>
-          ${item.bestGroup&&item.bestScore>=0.2
-            ?`<div class="review-card-suggestion">Looks similar to <strong>${esc(item.bestGroup)}</strong> (${item.bestCount.toLocaleString()} accounts)</div>`
-            :''}
-          <div class="review-card-actions">
-            <select id="${selId}">
-              <option value="${esc(item.value)}">Keep as separate category</option>
-              ${groupLabels.map(gl=>`<option value="${esc(gl)}"${gl===item.bestGroup&&item.bestScore>=0.2?' selected':''}>${esc(gl)} (${(groups.get(gl)?.reduce((s,x)=>s+x.count,0)||0).toLocaleString()})</option>`).join('')}
-            </select>
-          </div>
-        </div>`;
-      }else{
-        // Similar pair — suggest merging two existing groups
-        const mergeId=`dc-simpair-${dim.key}-${normalizeForMatch(item.a).replace(/\s/g,'_')}`;
-        // Get source breakdown for each group
-        const membersA=groups.get(item.a)||[];
-        const membersB=groups.get(item.b)||[];
-        function sourceBreakdown(members,label){
-          return members.map(m=>`<div class="matched-row-source"><span class="src-tag ${m.source==='target'?'src-target':'src-current'}">${m.source==='target'?'Target':'Current'}</span><span class="src-val">${esc(m.value)}</span><span class="src-count">${m.count.toLocaleString()}</span></div>`).join('');
-        }
-        html+=`<div class="review-card">
-          <span class="review-card-flag flag-similar">Possible duplicate</span>
-          <div class="review-card-value">"${esc(item.a)}" and "${esc(item.b)}"</div>
-          <div class="review-card-meta">These look similar. Should they be combined?</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-400);margin-bottom:var(--space-400)">
-            <div style="background:var(--bg-subtle);border-radius:var(--radius-md);padding:var(--space-300)">
-              <div style="font-weight:600;font-size:13px;margin-bottom:var(--space-200)">${esc(item.a)} <span style="color:var(--text-subtle);font-weight:400">(${item.countA.toLocaleString()})</span></div>
-              ${sourceBreakdown(membersA)}
-            </div>
-            <div style="background:var(--bg-subtle);border-radius:var(--radius-md);padding:var(--space-300)">
-              <div style="font-weight:600;font-size:13px;margin-bottom:var(--space-200)">${esc(item.b)} <span style="color:var(--text-subtle);font-weight:400">(${item.countB.toLocaleString()})</span></div>
-              ${sourceBreakdown(membersB)}
-            </div>
-          </div>
-          <div class="review-card-actions">
-            <select id="${mergeId}" data-merge-a="${esc(item.a)}" data-merge-b="${esc(item.b)}">
-              <option value="">Keep as separate groups</option>
-              <option value="a">Merge into "${esc(item.a)}"</option>
-              <option value="b">Merge into "${esc(item.b)}"</option>
-            </select>
-          </div>
-        </div>`;
-      }
-    }
-  }else{
-    html+=`<div style="background:var(--bg-success-subtle);border-radius:var(--radius-md);padding:var(--space-400) var(--space-600);margin-bottom:var(--space-400);font-size:14px;color:var(--text-success);font-weight:500">All values matched automatically. No action needed.</div>`;
-  }
-
-  // ===== SECTION 2: MATCHED GROUPS (expanded by default) =====
-  const matchedCount=sortedGroups.length;
-  const totalMatched=sortedGroups.reduce((s,[,members])=>s+members.reduce((s2,m)=>s2+m.count,0),0);
-  const toggleId=`dc-matched-toggle-${dim.key}`;
-  const detailsId=`dc-matched-details-${dim.key}`;
-
-  html+=`<div class="matched-toggle open" id="${toggleId}" onclick="dcToggleMatched('${dim.key}')">
-    <div class="matched-toggle-left">
-      <span class="matched-toggle-label">${matchedCount} matched groups</span>
-      <span class="matched-toggle-count">${totalMatched.toLocaleString()} total accounts</span>
-    </div>
-    <span class="matched-toggle-arrow">&#9660;</span>
-  </div>
-  <div class="matched-details" id="${detailsId}">`;
-
-  // Build list of all group labels for the merge-into dropdown
-  const allGroupLabels=sortedGroups.map(([label])=>label);
-
-  for(let gi=0;gi<sortedGroups.length;gi++){
-    const[masterLabel,members]=sortedGroups[gi];
-    const totalCount=members.reduce((s,m)=>s+m.count,0);
-    const groupId=`dc-grp-${dim.key}-${gi}`;
-
-    const targetMembers=members.filter(m=>m.source==='target');
-    const currentMembers=members.filter(m=>m.source==='current');
-
-    // Build merge-into dropdown options (all other groups)
-    const mergeOptions=allGroupLabels
-      .filter(l=>l!==masterLabel)
-      .map(l=>`<option value="${esc(l)}">${esc(l)}</option>`)
+    // Absorb dropdown: show available values (independent, not self)
+    const absorbOpts=availableForAbsorb
+      .filter(l=>l!==label)
+      .map(l=>{const g=groups.get(l);return`<option value="${esc(l)}">${esc(l)} (${g.targetCount}T / ${g.currentCount}C)</option>`})
       .join('');
 
-    html+=`<div class="matched-row">
-      <div class="matched-row-header">
-        <input type="checkbox" class="matched-row-check" data-dim="${dim.key}" data-group="${esc(masterLabel)}" onchange="dcUpdateMergeBar('${dim.key}')">
-        <input type="text" class="matched-row-name" id="${groupId}" value="${esc(masterLabel)}" data-original="${esc(masterLabel)}">
-        <span class="matched-row-total">${totalCount.toLocaleString()} total</span>
-        <div class="matched-row-merge">
-          <select data-dim="${dim.key}" data-source="${esc(masterLabel)}" onchange="dcMergeInto(this.dataset.dim,this.dataset.source,this.value);this.value='';" title="Merge this group into another">
-            <option value="">Merge into...</option>
-            ${mergeOptions}
-          </select>
-        </div>
-      </div>
-      <div class="matched-row-sources">
-        ${targetMembers.map(m=>`<div class="matched-row-source"><span class="src-tag src-target">Target</span><span class="src-val">${esc(m.value)}</span><span class="src-count">${m.count.toLocaleString()}</span></div>`).join('')}
-        ${currentMembers.map(m=>`<div class="matched-row-source"><span class="src-tag src-current">Current</span><span class="src-val">${esc(m.value)}${m.confidence!=='exact'?` <span class="recon-member-badge badge-${m.confidence==='auto'?'auto':'suggest'}">${m.confidence}</span>`:''}</span><span class="src-count">${m.count.toLocaleString()}</span></div>`).join('')}
-        ${!currentMembers.length?'<div class="matched-row-source"><span class="src-tag src-current">Current</span><span class="src-val" style="color:var(--text-disabled)">—</span><span class="src-count">0</span></div>':''}
-        ${!targetMembers.length?'<div class="matched-row-source"><span class="src-tag src-target">Target</span><span class="src-val" style="color:var(--text-disabled)">—</span><span class="src-count">0</span></div>':''}
-      </div>
-    </div>`;
+    // Absorbed chips (with remove X)
+    const absorbedChips=absorbed.map(src=>{
+      const g=groups.get(src);
+      const cnt=g?(g.targetCount+g.currentCount):0;
+      return`<span class="recon-absorbed-chip">${esc(src)} <span class="recon-absorbed-count">(${cnt})</span> <span class="recon-absorbed-x" data-dim="${dim.key}" data-source="${esc(src)}" onclick="event.stopPropagation();dcReconUnmerge(this.dataset.dim,this.dataset.source)">&times;</span></span>`;
+    }).join(' ');
+
+    // Recommendations: only show values that are still available to absorb
+    const recLabels=new Set((DC._recsCache[dim.key][label]||[]).filter(r=>!ms[r.label]&&r.label!==label).slice(0,5).map(r=>r.label));
+    const recChips=[...recLabels].map(l=>`<span class="recon-rec-chip" data-dim="${dim.key}" data-source="${esc(l)}" data-target="${esc(label)}" onclick="dcReconAbsorb(this.dataset.dim,this.dataset.target,this.dataset.source)">${esc(l)}</span>`).join(' ');
+
+    // All other available values not in top recommendations
+    const restLabels=availableForAbsorb.filter(l=>l!==label&&!recLabels.has(l));
+    const toggleId=`dc-rest-${dim.key}-${gi}`;
+    const restChips=restLabels.map(l=>`<span class="recon-rec-chip recon-rest-chip" data-dim="${dim.key}" data-source="${esc(l)}" data-target="${esc(label)}" onclick="dcReconAbsorb(this.dataset.dim,this.dataset.target,this.dataset.source)">${esc(l)}</span>`).join(' ');
+    const restToggle=restLabels.length
+      ?`<span class="recon-show-all" onclick="this.nextElementSibling.style.display='inline';this.style.display='none'">+${restLabels.length} more</span><span style="display:none">${restChips}</span>`
+      :'';
+
+    const recHtml=recChips||restToggle
+      ?`${recChips}${recChips&&restToggle?' ':''}${restToggle}`
+      :'<span style="color:var(--text-disabled);font-size:11px">&mdash;</span>';
+
+    html+=`<tr class="${isMerged?'recon-row-merged':''}">
+      <td><strong>${esc(label)}</strong>${hasManual?' <span class="badge b-red" style="font-size:10px">Unmatched</span>':''}${isMerged?` <span style="font-size:11px;color:var(--text-subtle)">&rarr; merged into ${esc(mergedInto)}</span>`:''}${memberHint}</td>
+      <td class="num">${data.targetCount.toLocaleString()}</td>
+      <td class="num">${data.currentCount.toLocaleString()}</td>
+      <td>${isMerged
+        ?'<span style="font-size:12px;color:var(--text-disabled)">Absorbed</span>'
+        :`<select class="recon-select" data-dim="${dim.key}" data-label="${esc(label)}" onchange="dcReconAbsorb(this.dataset.dim,this.dataset.label,this.value);this.selectedIndex=0;">
+          <option value="">+ Add value&hellip;</option>
+          ${absorbOpts}
+        </select>${absorbedChips?`<div style="margin-top:4px">${absorbedChips}</div>`:''}`
+      }</td>
+      <td>${isMerged?'':recHtml}</td>
+    </tr>`;
   }
 
-  html+=`<div class="merge-bar" id="dc-merge-bar-${dim.key}">
-    <span class="merge-bar-text">Merge selected groups:</span>
-    <button class="btn btn-primary" onclick="dcMergeSelected('${dim.key}')">Merge</button>
-  </div>`;
-
-  html+=`</div>`;
+  html+=`</tbody></table></div>`;
   return html;
 }
 
-function dcToggleMatched(dimKey){
-  const toggle=document.getElementById('dc-matched-toggle-'+dimKey);
-  const details=document.getElementById('dc-matched-details-'+dimKey);
-  const isOpen=!details.classList.contains('collapsed');
-  if(isOpen){
-    details.classList.add('collapsed');
-    toggle.classList.remove('open');
-  }else{
-    details.classList.remove('collapsed');
-    toggle.classList.add('open');
-  }
-}
-
-function dcUpdateMergeBar(dimKey){
-  const checks=document.querySelectorAll(`.matched-row-check[data-dim="${dimKey}"]:checked`);
-  const bar=document.getElementById('dc-merge-bar-'+dimKey);
-  bar.classList.toggle('visible',checks.length>=2);
-}
-
-function dcMergeSelected(dimKey){
-  const checks=[...document.querySelectorAll(`.matched-row-check[data-dim="${dimKey}"]:checked`)];
-  if(checks.length<2)return;
-  const groupNames=checks.map(c=>c.dataset.group);
-  // Keep the first selected group's name, merge others into it
-  const keepName=groupNames[0];
-  const mergeInto=groupNames.slice(1);
-
-  // Store merge decisions
-  if(!DC._manualMerges)DC._manualMerges={};
-  if(!DC._manualMerges[dimKey])DC._manualMerges[dimKey]={};
-  for(const name of mergeInto){
-    DC._manualMerges[dimKey][name]=keepName;
-  }
-
-  // Re-render this dimension
-  const recon=DC.reconciliations[dimKey];
-  // Apply merges to the reconciliation data
-  for(const m of recon.mappings){
-    if(mergeInto.includes(m.masterLabel)){
-      m.masterLabel=keepName;
-    }
-  }
-  // Update master labels
-  recon.masterLabels=recon.masterLabels.filter(ml=>!mergeInto.includes(ml));
-
-  // Re-render
-  const dim=DC.pendingDims.find(d=>d.key===dimKey);
-  const container=document.getElementById('dc-recon-dim-'+dimKey);
-  container.innerHTML=dcRenderReconPanel(dim,recon);
-}
-
-/* Merge a single group into another via the per-row dropdown */
-function dcMergeInto(dimKey,sourceLabel,targetLabel){
+/* ===== Reconciliation table event handlers ===== */
+function dcReconAbsorb(dimKey,targetLabel,sourceLabel){
   if(!sourceLabel||!targetLabel||sourceLabel===targetLabel)return;
+  if(!DC._mergeState)DC._mergeState={};
+  if(!DC._mergeState[dimKey])DC._mergeState[dimKey]={};
+  DC._mergeState[dimKey][sourceLabel]=targetLabel;
+  dcRefreshReconPanel(dimKey);
+}
 
-  if(!DC._manualMerges)DC._manualMerges={};
-  if(!DC._manualMerges[dimKey])DC._manualMerges[dimKey]={};
-  DC._manualMerges[dimKey][sourceLabel]=targetLabel;
-
-  const recon=DC.reconciliations[dimKey];
-  for(const m of recon.mappings){
-    if(m.masterLabel===sourceLabel) m.masterLabel=targetLabel;
+function dcReconUnmerge(dimKey,sourceLabel){
+  if(DC._mergeState&&DC._mergeState[dimKey]){
+    delete DC._mergeState[dimKey][sourceLabel];
   }
-  recon.masterLabels=recon.masterLabels.filter(ml=>ml!==sourceLabel);
+  dcRefreshReconPanel(dimKey);
+}
 
-  // Re-render
+function dcReconSort(dimKey,colKey){
+  if(!DC._reconSort)DC._reconSort={};
+  const cur=DC._reconSort[dimKey]||{col:'total',dir:'desc'};
+  if(cur.col===colKey){
+    cur.dir=cur.dir==='asc'?'desc':'asc';
+  }else{
+    cur.col=colKey;
+    cur.dir=colKey==='value'?'asc':'desc';
+  }
+  DC._reconSort[dimKey]=cur;
+  dcRefreshReconPanel(dimKey);
+}
+
+function dcRefreshReconPanel(dimKey){
   const dim=DC.pendingDims.find(d=>d.key===dimKey);
+  const recon=DC.reconciliations[dimKey];
   const container=document.getElementById('dc-recon-dim-'+dimKey);
   container.innerHTML=dcRenderReconPanel(dim,recon);
+  // Update tab badge
+  const ms=DC._mergeState[dimKey]||{};
+  const mergedCount=Object.keys(ms).filter(k=>ms[k]).length;
+  const tabs=document.querySelectorAll('#dc-recon-tabs .tab-btn');
+  tabs.forEach(btn=>{
+    if(btn.textContent.includes(dim.label.split(' ')[0])){
+      const existing=btn.querySelector('.badge');
+      if(existing)existing.remove();
+      if(mergedCount){
+        btn.insertAdjacentHTML('beforeend',` <span class="badge b-grn" style="margin-left:4px">${mergedCount} merged</span>`);
+      }
+    }
+  });
 }
 
 /* ========== STEP 3→4: CONFIRM AND RUN ========== */
 function dcConfirmAndRun(){
   const dims=DC.pendingDims;
-
   const dimensions=[];
+
   for(const dim of dims){
-    const valueMap={};  // original value → final display label
+    const valueMap={};
     const recon=DC.reconciliations[dim.key];
+    const ms=DC._mergeState&&DC._mergeState[dim.key]?DC._mergeState[dim.key]:{};
+
+    // Resolve merge chains: if A→B and B→C, A should end up in C
+    function resolveTarget(label){
+      const seen=new Set();
+      let current=label;
+      while(ms[current]&&!seen.has(current)){
+        seen.add(current);
+        current=ms[current];
+      }
+      return current;
+    }
 
     if(recon){
-      // 1. Build rename map: original master label → user-edited name
-      const renameMap={};
-      const groupInputs=document.querySelectorAll(`[id^="dc-grp-${dim.key}-"]`);
-      groupInputs.forEach(input=>{
-        const original=input.dataset.original;
-        const renamed=input.value.trim();
-        if(original&&renamed)renameMap[original]=renamed;
-      });
-
-      // 2. Build merge map from similar-pair dropdowns
-      const mergeMap={};
-      const simPairSelects=document.querySelectorAll(`[id^="dc-simpair-${dim.key}-"]`);
-      simPairSelects.forEach(sel=>{
-        const choice=sel.value;
-        const a=sel.dataset.mergeA;
-        const b=sel.dataset.mergeB;
-        if(choice==='a')mergeMap[b]=a;
-        else if(choice==='b')mergeMap[a]=b;
-      });
-      // Add manual merges from checkbox+merge button
-      if(DC._manualMerges&&DC._manualMerges[dim.key]){
-        Object.assign(mergeMap,DC._manualMerges[dim.key]);
-      }
-
-      // 3. Resolve merge chains: if A merges into B and B merges into C, A should end up in C
-      function resolveTarget(label){
-        const seen=new Set();
-        let current=label;
-        while(mergeMap[current]&&!seen.has(current)){
-          seen.add(current);
-          current=mergeMap[current];
-        }
-        return current;
-      }
-
       for(const m of recon.mappings){
-        if(m.confidence==='manual'){
-          // Unmatched — read from dropdown
-          const selId=`dc-recon-${dim.key}-${normalizeForMatch(m.value).replace(/\s/g,'_')}`;
-          const sel=document.getElementById(selId);
-          if(sel){
-            const selected=sel.value;
-            const resolved=resolveTarget(selected);
-            valueMap[m.value]=renameMap[resolved]||resolved;
-          }else{
-            valueMap[m.value]=m.value;
-          }
-        }else{
-          // Matched value — apply merge first, then rename
-          const resolved=resolveTarget(m.masterLabel);
-          const finalLabel=renameMap[resolved]||resolved;
-          valueMap[m.value]=finalLabel;
-        }
+        const resolved=resolveTarget(m.masterLabel);
+        valueMap[m.value]=resolved;
       }
     }
 
     const targetDist=buildDistributionWithMap(DC.targetRaw,dim.targetCol,dim.label,valueMap,dim.key);
     const currentDist=buildDistributionWithMap(DC.currentRaw,dim.currentCol,dim.label,valueMap,dim.key);
 
-    // Compare with no mapFn — values are already reconciled via valueMap
     const comp=compareSections(targetDist,currentDist,null);
     dimensions.push({key:dim.key,name:dim.label,comparison:comp,target:targetDist,current:currentDist,showMapped:false,
       targetCol:dim.targetCol,currentCol:dim.currentCol,valueMap});
@@ -1154,4 +1076,73 @@ function dcRenderSortableTable(dimKey,comparison,targetTotal,currentTotal,sortCo
   html+='<td></td><td></td></tr></tbody></table></div>';
 
   panel.innerHTML=html;
+}
+
+/* ========== EXPORT RESULTS ========== */
+function dcExportResults(){
+  const wb=XLSX.utils.book_new();
+  const dims=DC._resultDimensions;
+  if(!dims||!dims.length){alert('No results to export.');return;}
+
+  // Sheet 1: Config
+  const configRows=[
+    {Setting:'Export Date',Value:new Date().toLocaleString()},
+    {Setting:'Target Accounts',Value:DC.targetRaw.length},
+    {Setting:'Current Customers',Value:DC.currentRaw.length},
+    {Setting:'',Value:''},
+    {Setting:'--- Dimensions ---',Value:''},
+  ];
+  dims.forEach(d=>{configRows.push({Setting:d.name,Value:`Target col: ${d.targetCol}, Current col: ${d.currentCol}`})});
+
+  // Merge decisions
+  if(DC._mergeState){
+    configRows.push({Setting:'',Value:''},{Setting:'--- Merge Decisions ---',Value:''});
+    for(const dimKey of Object.keys(DC._mergeState)){
+      const ms=DC._mergeState[dimKey];
+      const dimLabel=dims.find(d=>d.key===dimKey)?.name||dimKey;
+      for(const[src,tgt]of Object.entries(ms)){
+        if(tgt)configRows.push({Setting:`${dimLabel}: "${src}"`,Value:`merged into "${tgt}"`});
+      }
+    }
+  }
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(configRows),'Config');
+
+  // Sheet per dimension: comparison table
+  for(const dim of dims){
+    const rows=dim.comparison.map(r=>({
+      Category:r.targetLabel,
+      'Target Count':r.targetCount,
+      'Target %':(r.targetPct*100).toFixed(1)+'%',
+      'Current Count':r.currentCount,
+      'Current %':(r.currentPct*100).toFixed(1)+'%',
+      'Delta (pp)':(r.delta*100).toFixed(1)+'%',
+      Alignment:Math.abs(r.delta)<=0.03?'Aligned':Math.abs(r.delta)<=0.08?'Slight gap':'Significant gap',
+    }));
+    // Add totals
+    rows.push({
+      Category:'Grand Total',
+      'Target Count':dim.target.total,
+      'Target %':'100%',
+      'Current Count':dim.current.total,
+      'Current %':'100%',
+      'Delta (pp)':'',
+      Alignment:'',
+    });
+    const name=dim.name.length>31?dim.name.slice(0,31):dim.name;
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),name);
+  }
+
+  // Sheet: Value Mappings (what raw values mapped to what final labels)
+  const mapRows=[];
+  for(const dim of dims){
+    if(!dim.valueMap)continue;
+    for(const[raw,final]of Object.entries(dim.valueMap)){
+      if(raw!==final)mapRows.push({Dimension:dim.name,'Original Value':raw,'Mapped To':final});
+    }
+  }
+  if(mapRows.length){
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(mapRows),'Value Mappings');
+  }
+
+  XLSX.writeFile(wb,'Distribution_Comparison_'+new Date().toISOString().slice(0,10)+'.xlsx');
 }

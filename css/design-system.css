@@ -428,6 +428,46 @@ tr:hover td{background:var(--bg-subtle)}
 .recon-member-badge.badge-suggest{background:var(--bg-warning-subtle);color:var(--text-warning)}
 .recon-member-badge.badge-exact{background:var(--bg-success-subtle);color:var(--text-success)}
 
+/* ========== NEW RECON TABLE ========== */
+.recon-table{width:100%}
+.recon-table th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-subtle);white-space:nowrap}
+.recon-table td{vertical-align:top;padding:var(--space-300) var(--space-400)}
+.recon-row-merged{opacity:.45;background:var(--bg-subtle)}
+.recon-row-merged:hover{opacity:.7}
+.recon-select{
+  background:var(--bg-subtle);color:var(--text-base);border:1px solid var(--border-subtle);
+  border-radius:var(--radius-md);padding:4px 8px;font-size:12px;width:100%;cursor:pointer;
+}
+.recon-select:focus{outline:none;border-color:var(--border-brand);box-shadow:0 0 0 2px var(--border-brand)}
+.recon-select:disabled{opacity:.3;cursor:default}
+.recon-rec-chip{
+  display:inline-block;font-size:11px;padding:2px 8px;
+  background:var(--bg-brand-subtle,#e8f0fe);color:var(--text-brand,#1a56db);
+  border-radius:var(--radius-sm);cursor:pointer;margin:1px 2px;
+  border:1px solid transparent;transition:all .15s;white-space:nowrap;
+}
+.recon-rec-chip:hover{background:var(--bg-brand);color:#fff;border-color:var(--bg-brand)}
+.recon-absorbed-chip{
+  display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;
+  background:var(--bg-success-subtle);color:var(--text-success);
+  border-radius:var(--radius-sm);margin:2px;white-space:nowrap;
+}
+.recon-absorbed-count{color:var(--text-subtle);font-size:10px}
+.recon-absorbed-x{
+  cursor:pointer;font-size:14px;line-height:1;color:var(--text-subtle);
+  margin-left:2px;font-weight:700;
+}
+.recon-absorbed-x:hover{color:var(--text-error)}
+.recon-rest-chip{background:var(--bg-subtle);color:var(--text-base);border:1px solid var(--border-base)}
+.recon-rest-chip:hover{background:var(--bg-brand);color:#fff;border-color:var(--bg-brand)}
+.recon-show-all{
+  display:inline-block;font-size:11px;padding:2px 8px;
+  color:var(--text-brand,#1a56db);cursor:pointer;
+  border-radius:var(--radius-sm);border:1px dashed var(--border-brand,#1a56db);
+  margin:1px 2px;white-space:nowrap;
+}
+.recon-show-all:hover{background:var(--bg-brand-subtle,#e8f0fe)}
+
 /* Unmatched section */
 .recon-unmatched{
   border:1px solid #005bbb;border-radius:var(--radius-md);

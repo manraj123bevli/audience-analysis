@@ -98,7 +98,9 @@ function dcGoToStep(n){
 
 /* Navigate to a step via step indicator click — only if already visited */
 function dcNavToStep(n){
-  if(n<=DC._highestStep) dcGoToStep(n);
+  if(n>DC._highestStep)return;
+  if(n===3&&DC._highestStep>=4){dcBackToReconcile();return;}
+  dcGoToStep(n);
 }
 
 function dcGoToStep2(){
